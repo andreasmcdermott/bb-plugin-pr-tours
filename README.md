@@ -18,7 +18,15 @@ bb plugin install . --yes
 
 ## Use
 
-Ask your agent to create a PR tour. The plugin includes a `pr-tours` skill with the review and authoring workflow; new agent sessions discover it automatically.
+In a BB thread, invoke the bundled skill:
+
+```text
+/pr-tour 123
+```
+
+A bare number uses the repository in that thread's current checkout. You can also pass `owner/repo#123` or a full GitHub PR URL. The skill prepares the PR, reuses or writes a tour, validates it, and directs you to the viewer. It does not post a GitHub review. New agent sessions discover the skill automatically.
+
+The underlying commands are also available directly:
 
 ```sh
 bb pr-tours prepare https://github.com/owner/repo/pull/123

@@ -1,11 +1,24 @@
 ---
-name: pr-tours
-description: Create, revise, or open a guided PR review in BB's PR Tours plugin. Use when the user asks for a PR tour or a guided walkthrough of a pull request. Ordinary PR reviews do not require a tour.
+name: pr-tour
+description: Create, revise, or open a guided PR review in BB. Use when the user invokes /pr-tour with a PR number or URL, or asks for a PR tour or guided walkthrough of a pull request. Ordinary PR reviews do not require a tour.
 ---
 
 # PR Tours
 
 Use `bb pr-tours` from any checkout. The plugin stores snapshots, tours, revisions, and reviewer drafts on the selected BB machine, outside worktrees and thread cleanup. The machine needs an authenticated `gh` CLI. No viewer server is needed.
+
+## Invocation
+
+Run this workflow when the user sends `/pr-tour 123`, `/pr-tour #123`, `/pr-tour owner/repo#123`, or `/pr-tour https://github.com/owner/repo/pull/123`. Treat the text after the command as the PR reference plus any requested focus or exclusions.
+
+The invocation requests a tour of the PR's current head in this thread. Reuse a current tour, revise the user's outdated tour, or create one when needed. It does not authorize posting a GitHub review.
+
+## Resolve the PR
+
+- For a full GitHub PR URL or `owner/repo#number`, pass that reference directly to prepare. An explicit repository takes precedence over the checkout.
+- For a positive number such as `123` or `#123`, use the thread's **current environment checkout** to resolve the repository. Run `gh repo view --json nameWithOwner --jq '.nameWithOwner'` there, then `gh pr view <number> --repo <owner/repo> --json url --jq '.url'`. Use the returned URL for prepare. Do not resolve from the plugin's installation directory or a former checkout associated with the thread's project.
+- With no reference, try `gh pr view --json url --jq '.url'` in the current checkout to identify the current branch's PR.
+- If the repository or PR cannot be resolved unambiguously, ask for the PR URL. Do not search unrelated repositories for a matching number.
 
 ## Create or reopen
 
