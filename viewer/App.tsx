@@ -136,7 +136,9 @@ function TourLoader({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [draftGeneration, setDraftGeneration] = useState(0);
-  const resetDraft = async () => {
+  const [postWarnings, setPostWarnings] = useState<string[]>([]);
+  const resetDraft = async (warnings?: string[]) => {
+    if (warnings) setPostWarnings(warnings);
     try {
       const value = await fetchDraft(revisionRef);
       setDraft(value);
@@ -159,16 +161,23 @@ function TourLoader({
   if (error) return <div className="fatal">{error}</div>;
   if (!review || !draft) return <div className="loading">Loading review…</div>;
   return (
-    <Review
-      key={draftGeneration}
-      resetDraft={() => void resetDraft()}
-      review={review}
-      initialDraft={draft}
-      tours={tours}
-      revisionRef={revisionRef}
-      onReload={reload}
-      onNavigate={onNavigate}
-    />
+    <>
+      {postWarnings.map((warning) => (
+        <p role="status" key={warning}>
+          {warning}
+        </p>
+      ))}
+      <Review
+        key={draftGeneration}
+        resetDraft={(warnings) => void resetDraft(warnings)}
+        review={review}
+        initialDraft={draft}
+        tours={tours}
+        revisionRef={revisionRef}
+        onReload={reload}
+        onNavigate={onNavigate}
+      />
+    </>
   );
 }
 
@@ -212,7 +221,7 @@ function Review({
   onReload,
   onNavigate,
 }: {
-  resetDraft: () => void;
+  resetDraft: (warnings?: string[]) => void;
   review: ReviewResponse;
   initialDraft: Draft;
   tours: TourSummary[];
@@ -252,8 +261,8 @@ function Review({
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   };
-  const reset = () => {
-    void save.cancel().then(resetDraft);
+  const reset = (warnings?: string[]) => {
+    void save.cancel().then(() => resetDraft(warnings));
   };
   const { pr, tour, files, validation, meta, isAuthor, isLatest, history } = review;
   const current = review.revision;

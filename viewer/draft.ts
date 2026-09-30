@@ -64,11 +64,19 @@ export function draftReducer(draft: Draft, action: DraftAction): Draft {
   }
 }
 
-export function readinessProblems(draft: Draft): string[] {
+export function readinessProblems(draft: Draft, acceptedFindings = 0): string[] {
   const problems: string[] = [];
   if (!draft.event) problems.push("Choose comment, approve, or request changes.");
-  if (draft.event && draft.event !== "APPROVE" && !draft.body.trim()) {
-    problems.push("GitHub requires a summary unless you approve.");
+  if (draft.event === "REQUEST_CHANGES" && !draft.body.trim()) {
+    problems.push("Add a summary when requesting changes.");
+  }
+  if (
+    draft.event === "COMMENT" &&
+    !draft.body.trim() &&
+    !draft.comments.some((comment) => comment.body.trim()) &&
+    acceptedFindings === 0
+  ) {
+    problems.push("Add a summary, a line comment, or accept a finding.");
   }
   return problems;
 }

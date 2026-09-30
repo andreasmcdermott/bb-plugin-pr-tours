@@ -106,13 +106,49 @@ describe("buildReview", () => {
     );
   });
 
-  test("requires a decision, and a summary unless approving", () => {
+  test("requires a decision and rejects empty comments and requests for changes", () => {
     expect(() => buildReview(fixtureTour(), fixtureDraft(), fixtureFiles, byAuthor)).toThrow(
       "no review decision",
     );
     expect(() =>
       buildReview(fixtureTour(), fixtureDraft({ event: "COMMENT" }), fixtureFiles, byAuthor),
+    ).toThrow("Add a summary, a line comment, or accept a finding.");
+    expect(() =>
+      buildReview(
+        fixtureTour(),
+        fixtureDraft({
+          event: "REQUEST_CHANGES",
+          findings: { "f-line": { status: "accepted" } },
+        }),
+        fixtureFiles,
+        byAuthor,
+      ),
     ).toThrow("requires a review summary");
+  });
+
+  test("allows inline comments and accepted findings without a summary", () => {
+    for (const draft of [
+      fixtureDraft({
+        event: "COMMENT",
+        body: "  ",
+        comments: [{ id: "c1", path: "src/app.ts", side: "RIGHT", line: 2, body: "Name this?" }],
+      }),
+      fixtureDraft({ event: "COMMENT", findings: { "f-line": { status: "accepted" } } }),
+    ]) {
+      const { payload } = buildReview(fixtureTour(), draft, fixtureFiles, byAuthor);
+      expect(payload.body).toBe("");
+      expect(payload.comments).toHaveLength(1);
+    }
+  });
+
+  test("moves comments outside the diff into the body without requiring a summary", () => {
+    const draft = fixtureDraft({
+      event: "COMMENT",
+      comments: [{ id: "c1", path: "src/app.ts", side: "RIGHT", line: 10, body: "Check callers" }],
+    });
+    const { payload } = buildReview(fixtureTour(), draft, fixtureFiles, byAuthor);
+    expect(payload.body).toContain("Check callers");
+    expect(payload.comments).toEqual([]);
   });
 });
 

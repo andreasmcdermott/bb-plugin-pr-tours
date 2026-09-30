@@ -1,4 +1,5 @@
 import { PostReview } from "./PostReview.tsx";
+import { Markdown } from "./Markdown.tsx";
 import { useTourApi } from "../runtime.tsx";
 import type { RevisionRef } from "../api.ts";
 import { REVIEW_EVENTS, type Draft, type ReviewEvent, type Tour } from "../../shared/schema.ts";
@@ -30,7 +31,7 @@ export function FinishReview({
   posted: ReadonlySet<string>;
   syncCommand: string;
   revisionRef: RevisionRef;
-  onPosted: () => void;
+  onPosted: (warnings?: string[]) => void;
 }) {
   const api = useTourApi();
   const tourFindings = tour?.sections.flatMap((s) => s.findings) ?? [];
@@ -39,7 +40,7 @@ export function FinishReview({
   const accepted = findings.filter((f) => draft.findings[f.id]?.status === "accepted").length;
   const undecided = findings.filter((f) => !draft.findings[f.id]).length;
   const comments = draft.comments.filter((c) => c.body.trim()).length;
-  const problems = readinessProblems(draft);
+  const problems = readinessProblems(draft, accepted);
   const locked = !isLatest || draft.readyAt !== null || draft.synced !== null;
 
   return (
@@ -55,14 +56,21 @@ export function FinishReview({
           </strong>
         )}
       </p>
-      <textarea
-        className="comment__input"
-        rows={5}
-        placeholder="Review summary for the author"
-        value={draft.body}
-        readOnly={locked}
-        onChange={(e) => dispatch({ type: "setBody", body: e.target.value })}
-      />
+      {draft.synced ? (
+        draft.body.trim() && <Markdown>{draft.body}</Markdown>
+      ) : (
+        <textarea
+          className="comment__input"
+          rows={5}
+          placeholder="Review summary for the author"
+          value={draft.body}
+          readOnly={locked}
+          onChange={(e) => dispatch({ type: "setBody", body: e.target.value })}
+        />
+      )}
+      {!draft.synced && (
+        <p className="finish__muted">A summary is optional when posting comments or approving.</p>
+      )}
       <fieldset className="finish__events" disabled={locked}>
         {REVIEW_EVENTS.map((event) => (
           <label key={event}>
@@ -86,7 +94,7 @@ export function FinishReview({
         <p>
           Posted to GitHub on {new Date(draft.synced.at).toLocaleString()}:{" "}
           <a href={draft.synced.url} target="_blank" rel="noreferrer">
-            view review
+            View on GitHub
           </a>
         </p>
       ) : !isLatest ? (

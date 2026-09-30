@@ -10,6 +10,7 @@ import { writePrepared, writeTourRevision } from "../cli/test-review.ts";
 import { resolveTour, latestRevision } from "../cli/review-dir.ts";
 import { reviewResponse, toursResponse } from "../cli/service.ts";
 import { emptyDraft } from "../shared/schema.ts";
+import { buildReview } from "../shared/review.ts";
 
 beforeEach(() => {
   vi.stubGlobal("CSS", { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "\\$&") });
@@ -22,7 +23,7 @@ afterEach(() => {
     .forEach((fn) => fn());
   vi.restoreAllMocks();
 });
-async function setup(emptyTours = false) {
+async function setup(emptyTours = false, postWarnings: string[] = []) {
   const dir = mkdtempSync(path.join(tmpdir(), "pr-tours-ui-"));
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
   writePrepared(dir);
@@ -38,21 +39,24 @@ async function setup(emptyTours = false) {
     url: review.pr.url,
     updatedAt: new Date().toISOString(),
   };
-  const save = vi.fn(async ({ draft }) => ({ draft, version: "saved" }));
+  let savedDraft = emptyDraft(review.pr.headSha);
+  const save = vi.fn(async ({ draft }) => {
+    savedDraft = draft;
+    return { draft, version: "saved" };
+  });
   const preview = vi.fn(async () => ({
     token: "preview-1",
     viewer: tourAuthor,
-    payload: {
-      commit_id: review.pr.headSha,
-      event: "APPROVE",
-      body: "Ready for review",
-      comments: [],
-    },
+    payload: buildReview(fixtureTour(), savedDraft, review.files, {
+      author: tourAuthor,
+      reviewer: tourAuthor,
+    }).payload,
   }));
-  const post = vi.fn(async () => ({
-    url: "https://github.com/org/repo/pull/1#review-10",
-    warnings: [],
-  }));
+  const post = vi.fn(async () => {
+    const url = "https://github.com/org/repo/pull/1#review-10";
+    savedDraft = { ...savedDraft, synced: { at: new Date().toISOString(), url } };
+    return { url, warnings: postWarnings };
+  });
   const freshness = vi.fn(async () => ({
     headSha: review.pr.headSha,
     state: "open",
@@ -68,7 +72,7 @@ async function setup(emptyTours = false) {
         tours: () =>
           emptyTours ? { viewer: tourAuthor, tours: [] } : toursResponse(dir, tourAuthor),
         review: () => review,
-        draft: () => ({ draft: emptyDraft(review.pr.headSha), version: "initial" }),
+        draft: () => ({ draft: savedDraft, version: "initial" }),
         freshness,
         preview,
         post,
@@ -172,7 +176,8 @@ it("keeps failed edits on screen, retries them, and blocks leaving until saved",
 });
 
 it("previews the saved review and requires an explicit click to post", async () => {
-  const { slot, save, preview, post } = await setup();
+  const warning = "The review was posted, but its comment links were not recorded.";
+  const { slot, save, preview, post } = await setup(false, [warning]);
   fireEvent.change(await slot.findByPlaceholderText("Review summary for the author"), {
     target: { value: "Ready for review" },
   });
@@ -188,6 +193,55 @@ it("previews the saved review and requires an explicit click to post", async () 
   expect(post).toHaveBeenCalledWith(
     expect.objectContaining({ token: "preview-1", viewerId: tourAuthor.id }),
   );
+  await waitFor(() =>
+    expect(slot.queryByPlaceholderText("Review summary for the author")).toBeNull(),
+  );
+  expect(slot.queryByRole("button", { name: "Keep editing" })).toBeNull();
+  expect(slot.getByText("Ready for review")).toBeTruthy();
+  expect(slot.getByText(warning)).toBeTruthy();
+  expect(save.mock.calls.at(-1)![0].draft.body).toBe("Ready for review");
+});
+it.each(["finding", "comment"])("allows posting an inline %s without a summary", async (source) => {
+  const { slot, preview, post } = await setup();
+  if (source === "finding") {
+    fireEvent.click((await slot.findAllByRole("button", { name: "Accept" }))[0]!);
+  } else {
+    fireEvent.click((await slot.findAllByRole("button", { name: "Comment on this line" }))[0]!);
+    fireEvent.change(await slot.findByPlaceholderText("Leave a comment for the author…"), {
+      target: { value: "Please check this line." },
+    });
+  }
+  fireEvent.click(slot.getByRole("radio", { name: /^Comment$/ }));
+  const ready = slot.getByRole("button", { name: "Mark ready for preview" });
+  expect((ready as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(ready);
+  fireEvent.click(await slot.findByRole("button", { name: "Preview GitHub review" }));
+  await slot.findByText("No review summary.");
+  expect((await preview.mock.results[0]!.value).payload).toMatchObject({
+    event: "COMMENT",
+    body: "",
+    comments: [expect.objectContaining({ path: "src/app.ts" })],
+  });
+  fireEvent.click(slot.getByRole("button", { name: "Post to GitHub" }));
+  await waitFor(() => expect(post).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(slot.queryByPlaceholderText("Review summary for the author")).toBeNull(),
+  );
+});
+it("keeps the summary when posting fails", async () => {
+  const { slot, post } = await setup();
+  post.mockRejectedValueOnce(new Error("GitHub unavailable"));
+  fireEvent.change(await slot.findByPlaceholderText("Review summary for the author"), {
+    target: { value: "Keep my review" },
+  });
+  fireEvent.click(slot.getByRole("radio", { name: "Approve" }));
+  fireEvent.click(slot.getByRole("button", { name: "Mark ready for preview" }));
+  fireEvent.click(await slot.findByRole("button", { name: "Preview GitHub review" }));
+  fireEvent.click(await slot.findByRole("button", { name: "Post to GitHub" }));
+  await slot.findByText("GitHub unavailable");
+  expect(
+    (slot.getByPlaceholderText("Review summary for the author") as HTMLTextAreaElement).value,
+  ).toBe("Keep my review");
 });
 
 it("shows live GitHub updates without changing the reviewed snapshot", async () => {

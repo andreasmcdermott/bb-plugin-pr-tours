@@ -70,12 +70,32 @@ describe("draftReducer", () => {
     );
   });
 
-  test("readiness needs a decision and a summary unless approving", () => {
+  test("readiness allows comments without a summary but rejects an empty comment review", () => {
     expect(readinessProblems(fixtureDraft())).toHaveLength(1);
     expect(readinessProblems(fixtureDraft({ event: "COMMENT" }))).toEqual([
-      "GitHub requires a summary unless you approve.",
+      "Add a summary, a line comment, or accept a finding.",
     ]);
     expect(readinessProblems(fixtureDraft({ event: "APPROVE" }))).toEqual([]);
+    expect(readinessProblems(fixtureDraft({ event: "COMMENT" }), 1)).toEqual([]);
+    expect(
+      readinessProblems(
+        fixtureDraft({
+          event: "COMMENT",
+          comments: [{ id: "c1", path: "src/app.ts", side: "RIGHT", line: 2, body: "Name this?" }],
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      readinessProblems(
+        fixtureDraft({
+          event: "COMMENT",
+          comments: [{ id: "c1", path: "src/app.ts", side: "RIGHT", line: 2, body: "  " }],
+        }),
+      ),
+    ).toHaveLength(1);
+    expect(readinessProblems(fixtureDraft({ event: "REQUEST_CHANGES" }), 1)).toEqual([
+      "Add a summary when requesting changes.",
+    ]);
   });
 });
 

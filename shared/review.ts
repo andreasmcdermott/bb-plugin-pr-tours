@@ -164,8 +164,11 @@ export function buildReview(
     sections.push(`### Notes outside the diff\n\n${bodyNotes.join("\n\n")}`);
   const reviewBody = sections.filter(Boolean).join("\n\n");
 
-  if (draft.event !== "APPROVE" && !reviewBody) {
+  if (draft.event === "REQUEST_CHANGES" && !reviewBody) {
     throw new Error(`GitHub requires a review summary when the decision is ${draft.event}`);
+  }
+  if (draft.event === "COMMENT" && !reviewBody && comments.length === 0) {
+    throw new Error("Add a summary, a line comment, or accept a finding.");
   }
 
   return {

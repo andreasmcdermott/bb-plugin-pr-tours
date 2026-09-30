@@ -9,7 +9,7 @@ export function PostReview({
   onPosted,
 }: {
   revisionRef: RevisionRef;
-  onPosted: () => void;
+  onPosted: (warnings?: string[]) => void;
 }) {
   const api = useTourApi();
   const [preview, setPreview] = useState<ReviewPreview | null>(null);
@@ -39,6 +39,7 @@ export function PostReview({
       const result = await api.postReview!(revisionRef, preview.token);
       setPosted(result);
       setPreview(null);
+      onPosted(result.warnings);
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
       setPreview(null);
@@ -58,7 +59,7 @@ export function PostReview({
         {posted.warnings.map((w) => (
           <p key={w}>{w}</p>
         ))}
-        <button className="button" onClick={onPosted}>
+        <button className="button" onClick={() => onPosted(posted.warnings)}>
           Reload posted review
         </button>
       </div>
