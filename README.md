@@ -2,7 +2,7 @@
 
 Read an agent's guided PR review inside BB, accept or dismiss findings, add line comments, and keep a draft GitHub review. Download a standalone HTML copy from the viewer when you want to share it.
 
-This plugin reuses the tour format, diff parser, validation, revision history, review construction, and React viewer from `monorepo/pr-tour`. BB supplies the UI and backend transport, so no separate viewer server is needed.
+BB provides the viewer and backend transport, so no separate web server is needed.
 
 ## Install
 
@@ -38,7 +38,7 @@ bb pr-tours validate <review-id> --tour <tour-id>
 
 Open **PR Tours** in BB's sidebar for the full library, or choose **PR Tours** in a thread's new-tab actions. The thread tab shows that thread's reviews and can show the full library. Use **Refresh tours** after the agent writes or revises a tour. The tour and revision pickers stay inside BB.
 
-To bring in an existing standalone review:
+To import a saved review directory:
 
 ```sh
 bb pr-tours import /absolute/path/to/review-directory
@@ -80,8 +80,8 @@ npm test
 bun run build
 ```
 
-The inherited Bun suite tests diff parsing, validation, revisions, review payloads, and the standalone transport. Vitest uses BB's official backend, host, and frontend harnesses to test the plugin boundaries, draft saves, downloads, and error states. The frontend test harness does not check browser layout; verify layout in BB after building.
+The Bun suite tests diff parsing, validation, revisions, review payloads, and HTML exports. Vitest uses BB's official backend, host, and frontend harnesses to test the plugin boundaries, draft saves, downloads, and error states. The frontend test harness does not check browser layout; verify layout in BB after building.
 
-`shared/` contains portable review logic; `cli/` retains the standalone implementation and filesystem services. `host.ts` performs filesystem and GitHub operations. `server.ts` owns the library, CLI registration, RPC, and export endpoint. `app.tsx` registers the BB page and thread tab; `viewer/` is shared with the standalone export.
+`shared/` contains portable review logic; `cli/` contains the review commands and filesystem services. `host.ts` performs filesystem and GitHub operations. `server.ts` owns the library, CLI registration, RPC, and export endpoint. `app.tsx` registers the BB page and thread tab; `viewer/` is shared with the standalone export.
 
 The host RPC transport currently limits individual responses to 8 MiB. Very large PRs or long revision histories may exceed that limit and will require paginated loading. Export is a snapshot of the prepared data; it does not fetch new commits.
