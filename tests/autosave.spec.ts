@@ -27,3 +27,13 @@ it("serializes writes so an older response cannot replace a newer edit", async (
   expect(save.mock.calls.map((call) => call[0].body)).toEqual(["First", "Final"]);
   expect(report).toHaveBeenLastCalledWith({ status: "saved" });
 });
+
+it("retains a failed edit so navigation retries instead of losing it", async () => {
+  const save = vi.fn().mockRejectedValueOnce(new Error("Offline")).mockResolvedValue(undefined);
+  const saver = createDraftSaver(fixtureDraft(), save, () => {});
+  saver.enqueue(fixtureDraft({ body: "Keep this" }));
+  await expect(saver.flush()).rejects.toThrow("Offline");
+  await saver.flush();
+  expect(save).toHaveBeenCalledTimes(2);
+  expect(save.mock.calls[1][0].body).toBe("Keep this");
+});

@@ -12,12 +12,14 @@ export function createDraftSaver(
   report: (state: SaveState) => void,
   delay = 400,
 ) {
+  let cancelled = false;
   let last = JSON.stringify(initial);
   let pending: Draft | undefined;
   let active: Promise<void> | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   async function flush(): Promise<void> {
     clearTimeout(timer);
+    if (cancelled) return;
     if (active) {
       await active;
       return flush();
@@ -25,11 +27,13 @@ export function createDraftSaver(
     if (!pending) return;
     const next = pending;
     pending = undefined;
+    report({ status: "saving" });
     active = (async () => {
       try {
         await save(next);
         last = JSON.stringify(next);
       } catch (error) {
+        if (!cancelled) pending ??= next;
         report({
           status: "error",
           message: error instanceof Error ? error.message : String(error),
@@ -46,7 +50,14 @@ export function createDraftSaver(
     report({ status: "saved" });
   }
   return {
+    cancel() {
+      cancelled = true;
+      pending = undefined;
+      clearTimeout(timer);
+      return active?.catch(() => {}) ?? Promise.resolve();
+    },
     enqueue(draft: Draft) {
+      if (cancelled) return;
       if (!active && !pending && JSON.stringify(draft) === last) return;
       pending = draft;
       report({ status: "saving" });

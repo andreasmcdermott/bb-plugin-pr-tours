@@ -23,17 +23,21 @@ The invocation requests a tour of the PR's current head in this thread. Reuse a 
 ## Create or reopen
 
 1. Run `bb pr-tours prepare <PR URL | owner/repo#number>`. The current thread selects the machine and is associated with the review. Outside a thread, pass `--thread <id>` or `--host <id>` when needed. Keep the returned review ID, host ID, and directory. Read its `pr.json` and `diff.json`; `diff.patch` contains the pinned diff. Surface preparation warnings, especially a truncated diff.
-2. Run `bb pr-tours tours <review-id>`. Reuse a valid tour for the current commit unless the user requested a new take. If the user's tour is outdated and they requested an update, revise it.
+2. Run `bb pr-tours tours <review-id>`. Reuse a valid tour for the current commit unless the user requested a new take; skip creation and continue to the direct link in step 6. If the user's tour is outdated and they requested an update, revise it.
 3. Run `bb pr-tours new-tour <review-id> --model <actual model ID> --agent <agent name>`. This records the authenticated user as author and prints the file to write.
 4. Read [writing-tours.md](references/writing-tours.md) before reviewing or composing. Review the complete change, then author `tour.json` in the current thread storage or workspace on the reported machine. Run `bb pr-tours write-tour <review-id> --tour <tour-id> --file /absolute/path/to/tour.json`. This validates and saves it into plugin storage without requiring the agent to write there directly. A remote path belongs to that host, not the BB server.
 5. Run `bb pr-tours validate <review-id> --tour <tour-id>` and correct validation errors. Every hunk must be covered and explained. Validation also refreshes the plugin library.
-6. Tell the user to open **PR Tours** in BB's sidebar, or select **PR Tours** in the thread panel's new-tab actions. Summarize substantive findings in chat without duplicating the tour. They can accept/dismiss findings, comment, select a decision, and mark the review ready there.
+6. Run `bb pr-tours open <review-id> --tour <tour-id>` and include the returned URL as a clickable Markdown link. Summarize substantive findings in chat without duplicating the tour. The user can accept or dismiss findings, comment, mark the review ready, preview the exact GitHub review, and post it in the viewer.
 
 To bring an existing standalone review into the plugin, run `bb pr-tours import /absolute/review/directory`. It copies the whole revision history into persistent plugin storage, preserving the original. Pass `--host` or `--thread` to select the source machine. Import refuses to overwrite an existing review. Use `bb pr-tours list` to find registered reviews.
 
+## Completion
+
+Every successful invocation, including reopening or revising an existing tour, ends with a direct link from `bb pr-tours open <review-id> --tour <tour-id>`. Lead the final response with `[Open PR #123 tour](<returned URL>)`, substituting the actual number and URL. Do not send the user to the sidebar to find it. If link generation fails, report that error before giving sidebar navigation as a fallback.
+
 ## Revise
 
-Run prepare again on the same host, then `bb pr-tours revise <review-id> --tour <id>`. Only the author can revise a tour. Read the previous revision and the new `changes.json`, and author a complete tour for the new snapshot and save it with `write-tour`. Keep IDs for unchanged sections and findings. Every previous finding must either remain or appear in `followUp` with a resolved/outdated explanation. Resolved findings must point to changed hunks. Validate again.
+Run prepare again on the same host, then `bb pr-tours revise <review-id> --tour <id>`. Only the author can revise a tour. Read the previous revision and the new `changes.json`, and author a complete tour for the new snapshot and save it with `write-tour`. Keep IDs for unchanged sections and findings. Every previous finding must either remain or appear in `followUp` with a resolved/outdated explanation. Resolved findings must point to changed hunks. Validate again, then return the direct tour link as described in Completion.
 
 ## Export and sync
 

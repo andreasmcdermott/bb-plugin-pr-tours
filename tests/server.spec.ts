@@ -125,3 +125,20 @@ it("uses only public BB SDK imports", () => {
   ).toEqual([]);
   expect(result.privateDependencies).toEqual([]);
 });
+
+it("archives without deleting data and includes archived tours in direct links", async () => {
+  const { harness } = setup();
+  const created = await harness.behavior.runCli(["prepare", "org/repo#1"]);
+  const entry = JSON.parse(created.stdout!);
+  await harness.behavior.callRpc("archive", { id: entry.id, archived: true });
+  expect(await harness.behavior.callRpc("list", {})).toEqual([]);
+  expect(await harness.behavior.callRpc("list", { archived: true })).toMatchObject([
+    { id: entry.id, archived: true },
+  ]);
+  expect(await harness.behavior.callRpc("list", { includeId: entry.id })).toHaveLength(1);
+  const opened = await harness.behavior.runCli(["open", entry.id, "--tour", "model-123"]);
+  expect(opened.exitCode).toBe(0);
+  expect(opened.stdout).toContain(`/plugins/pr-tours/tours/${entry.id}/model-123`);
+  await harness.behavior.callRpc("archive", { id: entry.id, archived: false });
+  expect(await harness.behavior.callRpc("list", {})).toHaveLength(1);
+});

@@ -99,5 +99,6 @@ export const LibraryEntrySchema = z.object({
   title: z.string(),
   url: z.string(),
   updatedAt: z.string(),
+  archived: z.coerce.boolean().default(false),
 });
 export type LibraryEntry = z.infer<typeof LibraryEntrySchema>;

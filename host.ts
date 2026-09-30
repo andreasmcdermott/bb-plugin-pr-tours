@@ -1,13 +1,16 @@
+import { createHash } from "node:crypto";
+import { snapshotStore } from "./cli/snapshots.ts";
 import { TourSchema } from "./shared/schema.ts";
 import { ownsTour } from "./shared/review.ts";
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 import { hostContract } from "./host-contract.ts";
-import { currentUser, gh, type Gh } from "./cli/gh.ts";
+import { currentUser, gh, ghJson, type Gh } from "./cli/gh.ts";
 import { prepare } from "./cli/prepare.ts";
 import {
   createTour,
+  listTours,
   loadDraft,
   writeJson,
   defaultReviewDir,
@@ -43,9 +46,44 @@ async function exclusive<T>(dir: string, action: () => Promise<T>): Promise<T> {
 }
 const clean = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
+const fingerprint = (value: unknown) =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const draftState = (draft: import("./shared/schema.ts").Draft) => ({
+  draft,
+  version: fingerprint(draft),
+});
 export function createHostEntry(run: Gh = gh) {
+  const snapshots = snapshotStore();
+  async function preview(dir: string, ref: { tourId: string; revision: number }, viewerId: number) {
+    const viewer = await currentUser(run);
+    if (viewer.id !== viewerId)
+      throw new Error("The GitHub account changed. Reload the tour before posting.");
+    const tour = resolveTour(dir, ref.tourId),
+      revision = latestRevision(tour);
+    if (revision.revision !== ref.revision)
+      throw new Error("The tour has a newer revision. Reload before posting.");
+    const result = await sync({
+      gh: run,
+      dir,
+      tour: ref.tourId,
+      dryRun: true,
+      expectedReviewerId: viewerId,
+    });
+    return {
+      viewer,
+      payload: result.payload,
+      token: fingerprint({
+        viewer,
+        ref,
+        draft: loadDraft(revision, viewer),
+        tour: revision.load,
+        payload: result.payload,
+      }),
+    };
+  }
   return experimental_defineHostEntry({
     contract: hostContract,
+    dispose: () => snapshots.clear(),
     handlers: {
       async prepare(input, ctx) {
         const dir =
@@ -90,10 +128,12 @@ export function createHostEntry(run: Gh = gh) {
         const tour = resolveTour(dir, ref.tourId),
           revision = resolveRevision(tour, ref.revision);
         return clean(
-          loadOrSeedDraft(revision, revisionContext(tour, revision), await currentUser(run)),
+          draftState(
+            loadOrSeedDraft(revision, revisionContext(tour, revision), await currentUser(run)),
+          ),
         );
       },
-      async save({ dir, ref, draft, viewerId }) {
+      async save({ dir, ref, draft, viewerId, expectedVersion }) {
         return exclusive(dir, async () => {
           const viewer = await currentUser(run);
           if (viewer.id !== viewerId)
@@ -101,14 +141,102 @@ export function createHostEntry(run: Gh = gh) {
               "The GitHub account on this machine changed. Reload the tour before editing.",
             );
           const tour = resolveTour(dir, ref.tourId);
-          const response = handleDraftPut(tour, resolveRevision(tour, ref.revision), viewer, draft);
+          const revision = resolveRevision(tour, ref.revision);
+          if (fingerprint(loadDraft(revision, viewer)) !== expectedVersion)
+            throw new Error(
+              "This draft changed in another view. Download your edits, then reload the saved draft before continuing.",
+            );
+          if (draft.synced) throw new Error("Only posting a review can mark a draft as posted.");
+          const response = handleDraftPut(tour, revision, viewer, draft);
           const body = await response.json();
           if (!response.ok) throw new Error(body.errors.join("\n"));
-          return body;
+          return draftState(body);
         });
       },
       async export({ dir, tourId }) {
         return clean(staticData(dir, { tour: tourId }));
+      },
+      async freshness({ dir }) {
+        const { pr } = loadPrepared(dir);
+        const live = await ghJson<{ head: { sha: string }; state: string }>(run, [
+          "api",
+          `repos/${pr.owner}/${pr.repo}/pulls/${pr.number}`,
+        ]);
+        return { headSha: live.head.sha, state: live.state, checkedAt: new Date().toISOString() };
+      },
+      async progress({ dir }) {
+        const viewer = await currentUser(run);
+        const drafts = listTours(dir)
+          .filter((t) => latestRevision(t).load.status === "ok")
+          .map((t) => {
+            const revision = latestRevision(t);
+            const draft = loadDraft(revision, viewer);
+            return {
+              draft,
+              total: revision.load.status === "ok" ? revision.load.tour.sections.length : 0,
+            };
+          });
+        const viewed = drafts.reduce((n, d) => n + d.draft.viewedSections.length, 0);
+        const total = drafts.reduce((n, d) => n + d.total, 0);
+        const status: "not-started" | "in-progress" | "ready" | "posted" =
+          drafts.length && drafts.every((d) => d.draft.synced)
+            ? "posted"
+            : drafts.some((d) => d.draft.readyAt && !d.draft.synced)
+              ? "ready"
+              : drafts.some(
+                    ({ draft: d }) =>
+                      d.synced ||
+                      d.body ||
+                      d.comments.length ||
+                      Object.keys(d.findings).length ||
+                      d.viewedSections.length,
+                  )
+                ? "in-progress"
+                : "not-started";
+        return { status, viewed, total };
+      },
+      async preview({ dir, ref, viewerId }) {
+        return exclusive(dir, () => preview(dir, ref, viewerId));
+      },
+      async post({ dir, ref, viewerId, token }) {
+        return exclusive(dir, async () => {
+          const current = await preview(dir, ref, viewerId);
+          if (current.token !== token)
+            throw new Error("The review changed. Preview it again before posting.");
+          const result = await sync({
+            gh: run,
+            dir,
+            tour: ref.tourId,
+            expectedReviewerId: viewerId,
+            expectedPayload: current.payload,
+          });
+          if (result.status !== "posted") throw new Error("Review was not posted");
+          return { url: result.url, warnings: result.warnings };
+        });
+      },
+      async snapshot({ dir, kind, ref }) {
+        return exclusive(dir, async () => {
+          if (kind === "export")
+            return snapshots.create(clean(staticData(dir, { tour: ref.tourId })));
+          const tour = resolveTour(dir, ref.tourId);
+          return snapshots.create(
+            clean(
+              reviewResponse(
+                dir,
+                tour,
+                resolveRevision(tour, ref.revision),
+                await currentUser(run),
+              ),
+            ),
+          );
+        });
+      },
+      async chunk({ token, index }) {
+        return snapshots.chunk(token, index);
+      },
+      async release({ token }) {
+        snapshots.release(token);
+        return null;
       },
       async command(input) {
         return exclusive(input.dir, async () => {

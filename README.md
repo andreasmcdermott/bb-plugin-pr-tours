@@ -34,9 +34,10 @@ bb pr-tours new-tour <review-id> --model <model-id> --agent <agent-name>
 # The agent authors tour.json in thread storage or its workspace.
 bb pr-tours write-tour <review-id> --tour <tour-id> --file /absolute/path/to/tour.json
 bb pr-tours validate <review-id> --tour <tour-id>
+bb pr-tours open <review-id> --tour <tour-id>
 ```
 
-Open **PR Tours** in BB's sidebar for the full library, or choose **PR Tours** in a thread's new-tab actions. The thread tab shows that thread's reviews and can show the full library. Use **Refresh tours** after the agent writes or revises a tour. The tour and revision pickers stay inside BB.
+Open **PR Tours** in BB's sidebar for the full library, or choose **PR Tours** in a thread's new-tab actions. The thread tab shows that thread's reviews and can show the full library. The viewer announces agent updates without interrupting your edits. Use **Refresh tours** to load them after saving. The tour and revision pickers stay inside BB. Use **Copy tour link** to return to a specific revision. The library supports search, per-account review progress, and archiving; archiving preserves the tour and its drafts.
 
 To import a saved review directory:
 
@@ -60,16 +61,18 @@ Exported files contain the reviewed source code. The plugin downloads files; upl
 
 Prepare the PR again on the same machine, then run `bb pr-tours revise <review-id> --tour <id>`. Each revision keeps its own commit and diff snapshot. Earlier revisions are read-only. Already-posted findings cannot be posted again.
 
-The viewer saves decisions under the authenticated GitHub user's numeric ID and shows that account. Only a tour's author can decide its findings; other reviewers can add their own comments. If the host's authenticated account changes while editing, saving fails until the tour is reloaded.
+The viewer saves decisions under the authenticated GitHub user's numeric ID and shows that account. Only a tour's author can decide its findings; other reviewers can add their own comments. If the host's authenticated account changes while editing, saving fails until the tour is reloaded. Failed saves retain your edits and offer a retry. Stale saves from another tab are rejected; you can download your edits before reloading the saved draft. The viewer checks GitHub for new commits when opened and offers a manual freshness check.
 
-After marking a review ready in the viewer, ask the agent to sync it:
+Mark the review ready, then choose **Preview GitHub review**. The preview shows the posting account, decision, summary, and inline comments. **Post to GitHub** submits that preview; account or draft changes require a new preview.
+
+You can also ask the agent to sync a ready review:
 
 ```sh
 bb pr-tours sync <review-id> --tour <id> --dry-run
 bb pr-tours sync <review-id> --tour <id>
 ```
 
-Sync uses `gh` on the review's machine. It checks that the PR is open, the reviewed commit is current, the decision is allowed, and the draft has not already been posted. Posting remains an explicit CLI action; marking a draft ready does not send it to GitHub.
+Sync uses `gh` on the review's machine. It checks that the PR is open, the reviewed commit is current, the decision is allowed, and the draft has not already been posted. Posting requires the UI’s **Post to GitHub** action or an explicit CLI sync; marking a draft ready does not send it to GitHub.
 
 ## Development
 
@@ -84,4 +87,4 @@ The Bun suite tests diff parsing, validation, revisions, review payloads, and HT
 
 `shared/` contains portable review logic; `cli/` contains the review commands and filesystem services. `host.ts` performs filesystem and GitHub operations. `server.ts` owns the library, CLI registration, RPC, and export endpoint. `app.tsx` registers the BB page and thread tab; `viewer/` is shared with the standalone export.
 
-The host RPC transport currently limits individual responses to 8 MiB. Very large PRs or long revision histories may exceed that limit and will require paginated loading. Export is a snapshot of the prepared data; it does not fetch new commits.
+Review and export data travel in bounded chunks from an immutable snapshot, so responses larger than the host transport’s 8 MiB limit can load. The host allows up to 128 MiB of active snapshot data; finish other downloads and retry if that capacity is reached. Export is a snapshot of the prepared data; it does not fetch new commits.

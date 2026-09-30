@@ -21,14 +21,14 @@ afterEach(async () => {
   await Promise.all(disposers.splice(0).map((fn) => fn()));
   dirs.splice(0).forEach((dir) => rmSync(dir, { recursive: true, force: true }));
 });
-function setup() {
+function setup(responses: Record<string, string | (() => string)> = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "bb-pr-tours-test-"));
   dirs.push(root);
   const dir = path.join(root, "source");
   writePrepared(dir);
   writeTourRevision(dir, { tour: fixtureTour() });
   let user = tourAuthor;
-  const run = fakeGh({ "api user": () => JSON.stringify(user) });
+  const run = fakeGh({ "api user": () => JSON.stringify(user), ...responses });
   const harness = experimental_createHostEntryHarness(createHostEntry(run), {
     experimental_paths: { dataDir: path.join(root, "data"), tempDir: path.join(root, "tmp") },
   });
@@ -69,16 +69,36 @@ describe("host worker", () => {
       body: "My private review",
       findings: { "f-line": { status: "accepted" } },
     });
-    await harness.experimental_call("save", { dir, ref, draft, viewerId: tourAuthor.id });
-    expect((await harness.experimental_call("draft", { dir, ref })).body).toBe("My private review");
+    await harness.experimental_call("save", {
+      dir,
+      ref,
+      draft,
+      viewerId: tourAuthor.id,
+      expectedVersion: (await harness.experimental_call("draft", { dir, ref })).version,
+    });
+    expect((await harness.experimental_call("draft", { dir, ref })).draft.body).toBe(
+      "My private review",
+    );
     setUser(otherReviewer);
     await expect(
-      harness.experimental_call("save", { dir, ref, draft, viewerId: tourAuthor.id }),
+      harness.experimental_call("save", {
+        dir,
+        ref,
+        draft,
+        viewerId: tourAuthor.id,
+        expectedVersion: (await harness.experimental_call("draft", { dir, ref })).version,
+      }),
     ).rejects.toThrow("account");
     await expect(
-      harness.experimental_call("save", { dir, ref, draft, viewerId: otherReviewer.id }),
+      harness.experimental_call("save", {
+        dir,
+        ref,
+        draft,
+        viewerId: otherReviewer.id,
+        expectedVersion: (await harness.experimental_call("draft", { dir, ref })).version,
+      }),
     ).rejects.toThrow("only");
-    expect((await harness.experimental_call("draft", { dir, ref })).body).toBe("");
+    expect((await harness.experimental_call("draft", { dir, ref })).draft.body).toBe("");
   });
   it("exports a reading copy with no private drafts", async () => {
     const { harness, dir } = setup();
@@ -88,7 +108,13 @@ describe("host worker", () => {
         { id: "private", path: "src/app.ts", side: "RIGHT", line: 21, body: "Private comment" },
       ],
     });
-    await harness.experimental_call("save", { dir, ref, draft, viewerId: tourAuthor.id });
+    await harness.experimental_call("save", {
+      dir,
+      ref,
+      draft,
+      viewerId: tourAuthor.id,
+      expectedVersion: (await harness.experimental_call("draft", { dir, ref })).version,
+    });
     const data = await harness.experimental_call("export", { dir, tourId: ref.tourId });
     expect(data.mode).toBe("read");
     expect(JSON.stringify(data)).not.toContain("Do not export this");
@@ -136,5 +162,126 @@ it("imports agent-authored JSON only after validating ownership and the pinned d
   ).toBe(true);
   expect((await harness.experimental_call("review", { dir, ref })).tour!.summary).toBe(
     changed.summary,
+  );
+});
+
+it("rejects stale saves from a second view instead of overwriting the first", async () => {
+  const { harness, dir } = setup();
+  const initial = await harness.experimental_call("draft", { dir, ref });
+  const version = initial.version;
+  const save = (draft: ReturnType<typeof fixtureDraft>) =>
+    harness.experimental_call("save", {
+      dir,
+      ref,
+      draft,
+      viewerId: tourAuthor.id,
+      expectedVersion: version,
+    });
+  await save(fixtureDraft({ body: "First view's comment" }));
+  await expect(save(fixtureDraft({ event: "APPROVE" }))).rejects.toThrow(/changed in another view/);
+});
+
+it("checks GitHub freshness without changing the pinned review snapshot", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "pr-tours-freshness-"));
+  dirs.push(root);
+  writePrepared(root);
+  writeTourRevision(root, { tour: fixtureTour() });
+  const run = fakeGh({
+    "api user": JSON.stringify(tourAuthor),
+    "api repos/useshortcut/monorepo/pulls/42": JSON.stringify({
+      head: { sha: "new-head" },
+      state: "closed",
+    }),
+  });
+  const harness = experimental_createHostEntryHarness(createHostEntry(run));
+  disposers.push(() => harness.experimental_dispose());
+  expect(await harness.experimental_call("freshness", { dir: root })).toMatchObject({
+    headSha: "new-head",
+    state: "closed",
+  });
+  expect((await harness.experimental_call("review", { dir: root, ref })).pr.headSha).toBe(
+    fixturePr.headSha,
+  );
+});
+
+it("transfers a review larger than 8 MiB as an immutable snapshot", async () => {
+  const { harness, dir } = setup();
+  const summary = "Large tour 🚀 ".repeat(650_000);
+  writeTourRevision(dir, { tour: fixtureTour({ summary }) });
+  await expect(harness.experimental_call("review", { dir, ref })).rejects.toThrow();
+  const snapshot = await harness.experimental_call("snapshot", { dir, ref, kind: "review" });
+  writeTourRevision(dir, { tour: fixtureTour({ summary: "Changed while loading" }) });
+  const chunks: Buffer[] = [];
+  for (let index = 0; index < snapshot.chunks; index++) {
+    const chunk = await harness.experimental_call("chunk", { token: snapshot.token, index });
+    expect(chunk.length).toBeLessThan(512 * 1024);
+    chunks.push(Buffer.from(chunk, "base64"));
+  }
+  expect(JSON.parse(Buffer.concat(chunks).toString("utf8")).tour.summary).toBe(summary);
+  await harness.experimental_call("release", { token: snapshot.token });
+  await expect(
+    harness.experimental_call("chunk", { token: snapshot.token, index: 0 }),
+  ).rejects.toThrow(/expired/);
+});
+
+it("posts only the previewed draft and account, rejects stale previews and duplicate posts", async () => {
+  const { harness, dir, run, setUser } = setup({
+    "api repos/useshortcut/monorepo/pulls/42": JSON.stringify({
+      state: "open",
+      head: { sha: fixturePr.headSha },
+      user: { login: "someone-else" },
+    }),
+    "api --method POST repos/useshortcut/monorepo/pulls/42/reviews --input -": JSON.stringify({
+      id: 100,
+      html_url: "https://github.com/org/repo/pull/42#review-100",
+    }),
+  });
+  const draft = fixtureDraft({
+    body: "Checked the callers",
+    event: "APPROVE",
+    readyAt: new Date().toISOString(),
+  });
+  const initial = await harness.experimental_call("draft", { dir, ref });
+  const saved = await harness.experimental_call("save", {
+    dir,
+    ref,
+    draft,
+    viewerId: tourAuthor.id,
+    expectedVersion: initial.version,
+  });
+  const preview = await harness.experimental_call("preview", { dir, ref, viewerId: tourAuthor.id });
+  expect(preview.viewer).toEqual(tourAuthor);
+  expect(preview.payload.body).toContain("Checked the callers");
+  expect(run.calls.some((call) => call.args.includes("POST"))).toBe(false);
+  setUser(otherReviewer);
+  await expect(
+    harness.experimental_call("post", { dir, ref, viewerId: tourAuthor.id, token: preview.token }),
+  ).rejects.toThrow(/account/);
+  setUser(tourAuthor);
+  await harness.experimental_call("save", {
+    dir,
+    ref,
+    draft: { ...draft, body: "Changed since preview" },
+    viewerId: tourAuthor.id,
+    expectedVersion: saved.version,
+  });
+  await expect(
+    harness.experimental_call("post", { dir, ref, viewerId: tourAuthor.id, token: preview.token }),
+  ).rejects.toThrow(/review changed/);
+  expect(run.calls.some((call) => call.args.includes("POST"))).toBe(false);
+  const latest = await harness.experimental_call("preview", { dir, ref, viewerId: tourAuthor.id });
+  const result = await harness.experimental_call("post", {
+    dir,
+    ref,
+    viewerId: tourAuthor.id,
+    token: latest.token,
+  });
+  expect(result.url).toContain("review-100");
+  await expect(
+    harness.experimental_call("post", { dir, ref, viewerId: tourAuthor.id, token: latest.token }),
+  ).rejects.toThrow(/already posted/);
+  expect(run.calls.filter((call) => call.args.includes("POST"))).toHaveLength(1);
+  expect((await harness.experimental_call("draft", { dir, ref })).draft.synced?.url).toBe(
+    result.url,
   );
 });

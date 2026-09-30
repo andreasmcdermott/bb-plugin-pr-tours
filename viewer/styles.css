@@ -1,5 +1,5 @@
 @scope (.pr-tour-root) {
-  .pr-tour-root {
+  :scope {
     --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     --color-text: #1f2328;
@@ -19,20 +19,21 @@
     --color-nit: #59636e;
     --color-question: #8250df;
     --color-met: #1a7f37;
+    --color-on-accent: #ffffff;
     --color-accepted-bg: #f0fff4;
     --color-dismissed-text: #818b98;
     --radius: 6px;
     --sidebar-width: 260px;
   }
 
-  .pr-tour-root * {
+  * {
     box-sizing: border-box;
   }
 
-  .pr-tour-root {
+  :scope {
     margin: 0;
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.5;
     color: var(--color-text);
     background: var(--color-canvas);
@@ -45,13 +46,13 @@
   code,
   pre {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .loading,
   .fatal {
     padding: 48px;
-    font-size: 16px;
+    font-size: 14px;
   }
 
   .fatal {
@@ -78,7 +79,7 @@
   .sidebar__progress {
     margin-bottom: 12px;
     color: var(--color-muted);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .sidebar__list {
@@ -113,12 +114,13 @@
   }
 
   .sidebar__count {
+    flex: 0 0 auto;
     min-width: 20px;
     padding: 0 6px;
     border-radius: 10px;
     background: var(--color-canvas);
     color: var(--color-muted);
-    font-size: 12px;
+    font-size: 11px;
     text-align: center;
   }
 
@@ -131,7 +133,7 @@
 
   .pr-header h1 {
     margin: 8px 0 12px;
-    font-size: 24px;
+    font-size: 20px;
   }
 
   .pr-header__meta {
@@ -144,7 +146,7 @@
 
   .save {
     margin-left: auto;
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .save--error {
@@ -219,7 +221,7 @@
   .panel h2,
   .section h2 {
     margin: 0 0 8px;
-    font-size: 18px;
+    font-size: 16px;
   }
 
   .section--synthetic {
@@ -252,7 +254,7 @@
   }
 
   .section__findings h3 {
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .markdown > :first-child {
@@ -295,11 +297,13 @@
   }
 
   .status {
+    flex: 0 0 auto;
+    white-space: nowrap;
     padding: 0 6px;
     border-radius: 4px;
     background: var(--color-canvas);
     color: var(--color-muted);
-    font-size: 11px;
+    font-size: 10px;
     text-transform: uppercase;
   }
 
@@ -322,14 +326,14 @@
     background: var(--color-hunk-bg);
     color: var(--color-muted);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .hunk__table {
     width: 100%;
     border-collapse: collapse;
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .line td {
@@ -357,7 +361,7 @@
     border: none;
     border-radius: 4px;
     background: var(--color-link);
-    color: var(--color-surface);
+    color: var(--color-on-accent);
     cursor: pointer;
     line-height: 20px;
   }
@@ -382,7 +386,7 @@
     margin-left: 8px;
     color: var(--color-blocker);
     font-family: var(--font-sans);
-    font-size: 11px;
+    font-size: 10px;
   }
 
   .line--add td {
@@ -407,7 +411,7 @@
     border-bottom: 1px solid var(--color-border);
     background: var(--color-canvas);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .range-note > td {
@@ -416,7 +420,7 @@
     background: var(--color-hunk-bg);
     box-shadow: inset 3px 0 var(--color-link);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .line--in-range > td:first-child {
@@ -430,7 +434,7 @@
   .entry__range-lines {
     color: var(--color-muted);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .finding,
@@ -487,13 +491,13 @@
   .finding__location {
     color: var(--color-muted);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .finding__status {
     margin-left: auto;
     color: var(--color-muted);
-    font-size: 12px;
+    font-size: 11px;
     text-transform: uppercase;
   }
 
@@ -504,11 +508,17 @@
   }
 
   .badge {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    overflow-wrap: normal;
+    line-height: 1.6;
     padding: 0 8px;
     border-radius: 10px;
-    color: var(--color-surface);
+    color: var(--color-on-accent);
     background: var(--color-nit);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     text-transform: uppercase;
   }
@@ -546,7 +556,7 @@
     padding: 4px 12px;
     border-bottom: 1px solid var(--color-border);
     color: var(--color-muted);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .suggestion__code {
@@ -568,7 +578,7 @@
   .comment__label {
     margin-bottom: 6px;
     color: var(--color-muted);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .comment__input {
@@ -600,7 +610,7 @@
   .button--primary {
     border-color: var(--color-met);
     background: var(--color-met);
-    color: var(--color-surface);
+    color: var(--color-on-accent);
   }
 
   .button--quiet {
@@ -631,6 +641,10 @@
     margin-top: 2px;
   }
 
+  .requirement__text > strong {
+    flex: 0 0 auto;
+  }
+
   .requirement__text {
     display: flex;
     gap: 8px;
@@ -649,7 +663,7 @@
     border: 1px solid var(--color-border);
     border-radius: 10px;
     color: var(--color-muted);
-    font-size: 12px;
+    font-size: 11px;
     white-space: nowrap;
   }
 
@@ -715,7 +729,7 @@
 
   .panel--since h3 {
     margin: 16px 0 4px;
-    font-size: 14px;
+    font-size: 13px;
   }
 
   .since__list {
@@ -734,16 +748,17 @@
   .since__muted,
   .since__decision {
     color: var(--color-muted);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .changed-chip {
+    flex: 0 0 auto;
     margin-left: auto;
     padding: 0 8px;
     border: 1px solid var(--color-major);
     border-radius: 10px;
     color: var(--color-major);
-    font-size: 12px;
+    font-size: 11px;
     white-space: nowrap;
   }
 
@@ -762,7 +777,7 @@
   .finding__history {
     margin: 4px 0 8px;
     color: var(--color-muted);
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .finding--posted {

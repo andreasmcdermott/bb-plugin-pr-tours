@@ -83,6 +83,7 @@ function ReviewPage({
   const [selected, setSelected] = useState(initialRef);
   const api = useMemo<TourApi>(() => {
     let viewerId: number | undefined;
+    const versions = new Map<string, string>();
     return {
       flush: async () => {
         await Promise.all([...flushers.current].map((flush) => flush()));
@@ -99,15 +100,57 @@ function ReviewPage({
         setSelected((current) => (current?.tourId ? current : { tourId: result.tours[0]?.id }));
         return result;
       },
-      fetchReview: (ref) => rpc.call("review", { id: entry.id, ref }),
-      fetchDraft: (ref) => rpc.call("draft", { id: entry.id, ref }),
-      saveDraft: (ref, draft) => {
+      fetchReview: (ref) => {
+        setSelected(ref);
+        return rpc.call("review", { id: entry.id, ref });
+      },
+      fetchDraft: async (ref) => {
+        const state = await rpc.call("draft", { id: entry.id, ref });
+        versions.set(`${ref.tourId}@${ref.revision}`, state.version);
+        return state.draft;
+      },
+      checkFreshness: () => rpc.call("freshness", { id: entry.id }),
+      previewReview: (ref) => rpc.call("preview", { id: entry.id, ref, viewerId: viewerId! }),
+      postReview: (ref, token) =>
+        rpc.call("post", { id: entry.id, ref, token, viewerId: viewerId! }),
+      saveDraft: async (ref, draft) => {
         if (!viewerId)
           return Promise.reject(new Error("Load the reviewer identity before editing"));
-        return rpc.call("save", { id: entry.id, ref, draft, viewerId });
+        const key = `${ref.tourId}@${ref.revision}`;
+        const expectedVersion = versions.get(key);
+        if (!expectedVersion) throw new Error("Load the draft before editing");
+        const state = await rpc.call("save", {
+          id: entry.id,
+          ref,
+          draft,
+          viewerId,
+          expectedVersion,
+        });
+        versions.set(key, state.version);
+        return state.draft;
       },
     };
   }, [entry.id, rpc]);
+  const [updated, setUpdated] = useState(false);
+  const [linkMessage, setLinkMessage] = useState("");
+  useRealtime("tours-changed", (payload) => {
+    const event = payload as { id?: string; kind?: string };
+    if (event.id === entry.id && event.kind !== "draft" && event.kind !== "archive")
+      setUpdated(true);
+  });
+  const copyLink = async () => {
+    try {
+      const ref =
+        selected?.tourId && selected.revision
+          ? { tourId: selected.tourId, revision: selected.revision }
+          : undefined;
+      const url = await rpc.call("link", { id: entry.id, ...(ref ? { ref } : {}) });
+      await navigator.clipboard.writeText(url);
+      setLinkMessage("Link copied");
+    } catch (error) {
+      setLinkMessage(message(error));
+    }
+  };
   const leave = (action: () => void) => {
     void api.flush!().then(action, () => {});
   };
@@ -128,7 +171,12 @@ function ReviewPage({
             <button className="button button--quiet" onClick={() => leave(refresh)}>
               Refresh tours
             </button>
+            {updated && <span role="status">Tour updated. Refresh to load it.</span>}
             <span className="toolbar-spacer" />
+            <button className="button button--quiet" onClick={() => void copyLink()}>
+              Copy tour link
+            </button>
+            {linkMessage && <span role="status">{linkMessage}</span>}
             <ExportButton id={entry.id} tourId={selected?.tourId} />
           </div>
         }
@@ -153,16 +201,24 @@ function Library({
   const [error, setError] = useState<string | null>(null);
   const [localId, setLocalId] = useState<string | null>(null);
   const [all, setAll] = useState(!threadId);
+  const [query, setQuery] = useState("");
+  const [archived, setArchived] = useState(false);
   const [generation, setGeneration] = useState(0);
   const load = useCallback(() => {
-    rpc.call("list", all || !threadId ? {} : { threadId }).then(
-      (value) => {
-        setEntries(value);
-        setError(null);
-      },
-      (error) => setError(message(error)),
-    );
-  }, [rpc, all, threadId]);
+    rpc
+      .call("list", {
+        ...(all || !threadId ? {} : { threadId }),
+        archived,
+        ...(requestedId ? { includeId: requestedId } : {}),
+      })
+      .then(
+        (value) => {
+          setEntries(value);
+          setError(null);
+        },
+        (error) => setError(message(error)),
+      );
+  }, [rpc, all, threadId, archived, requestedId]);
   useEffect(load, [load]);
   useRealtime("tours-changed", load);
   const id = requestedId ?? localId;
@@ -207,6 +263,22 @@ function Library({
           Show reviews from all threads
         </label>
       )}
+      <div className="library-controls">
+        <input
+          aria-label="Search reviews"
+          placeholder="Search by title, repository, or PR number"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        <label>
+          <input
+            type="checkbox"
+            checked={archived}
+            onChange={(event) => setArchived(event.target.checked)}
+          />{" "}
+          Show archived reviews
+        </label>
+      </div>
       {error && <p role="alert">{error}</p>}
       {id && entries && !entry && <p role="alert">This review is not in the current list.</p>}
       {!entries ? (
@@ -215,8 +287,7 @@ function Library({
         <div className="library-empty">
           <h3>No tours yet</h3>
           <p>
-            Ask your agent to create a PR tour. It can prepare the PR and write the tour directly
-            from this thread.
+            Run <code>/pr-tour 123</code> in a thread to create a guided review.
           </p>
           <p>
             To bring in an existing review, use{" "}
@@ -225,18 +296,90 @@ function Library({
         </div>
       ) : (
         <ul className="library-list">
-          {entries.map((entry) => (
-            <li key={entry.id}>
-              <button onClick={() => choose(entry.id)}>
-                <strong>{entry.title}</strong>
-                <span>{entry.url.replace("https://github.com/", "")}</span>
-                <small>Updated {new Date(entry.updatedAt).toLocaleString()}</small>
-              </button>
-            </li>
-          ))}
+          {entries
+            .filter((entry) =>
+              `${entry.title} ${entry.url}`.toLowerCase().includes(query.toLowerCase()),
+            )
+            .map((entry) => (
+              <LibraryCard
+                key={entry.id}
+                entry={entry}
+                choose={() => choose(entry.id)}
+                refresh={load}
+              />
+            ))}
+          {entries.length > 0 &&
+            !entries.some((entry) =>
+              `${entry.title} ${entry.url}`.toLowerCase().includes(query.toLowerCase()),
+            ) && <li>No matching reviews.</li>}
         </ul>
       )}
     </div>
+  );
+}
+
+function LibraryCard({
+  entry,
+  choose,
+  refresh,
+}: {
+  entry: LibraryEntry;
+  choose: () => void;
+  refresh: () => void;
+}) {
+  const rpc = useRpc<typeof rpcContract>();
+  const [progress, setProgress] = useState("Checking progress…");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    rpc.call("progress", { id: entry.id }).then(
+      (value) => {
+        const labels = {
+          "not-started": "Not started",
+          "in-progress": "In progress",
+          ready: "Ready to post",
+          posted: "Posted",
+        };
+        if (active)
+          setProgress(`${labels[value.status]} · ${value.viewed}/${value.total} sections viewed`);
+      },
+      () => {
+        if (active)
+          setProgress("Progress unavailable. Check that the review's machine is connected.");
+      },
+    );
+    return () => {
+      active = false;
+    };
+  }, [rpc, entry]);
+  return (
+    <li>
+      <button onClick={choose}>
+        <strong>{entry.title}</strong>
+        <span>{entry.url.replace("https://github.com/", "")}</span>
+        <small>{progress}</small>
+      </button>
+      <button
+        disabled={busy}
+        className="library-archive"
+        onClick={async () => {
+          setBusy(true);
+          setError("");
+          try {
+            await rpc.call("archive", { id: entry.id, archived: !entry.archived });
+            refresh();
+          } catch (error) {
+            setError(message(error));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {entry.archived ? "Restore" : "Archive"}
+      </button>
+      {error && <p role="alert">{error}</p>}
+    </li>
   );
 }
 

@@ -38,6 +38,8 @@
   max-height: 100cqh;
 }
 .pr-tours-library {
+  font-size: 13px;
+  line-height: 1.5;
   height: 100%;
   overflow: auto;
   padding: 24px;
@@ -50,7 +52,7 @@
   gap: 16px;
 }
 .pr-tours-library h2 {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 600;
   margin: 0 0 8px;
 }
@@ -119,4 +121,33 @@
     padding: 16px;
     min-width: 0;
   }
+}
+.pr-tours-library .library-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  margin: 16px 0;
+}
+.pr-tours-library .library-controls input:not([type="checkbox"]) {
+  flex: 1;
+  min-width: 180px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--foreground);
+}
+.pr-tours-library .library-list .library-archive {
+  width: auto;
+  padding: 6px 12px;
+  margin-top: 6px;
+}
+.pr-tours-embedded .post-review {
+  margin: 16px 0;
+}
+
+.pr-tours-library button,
+.pr-tours-library input {
+  font: inherit;
 }

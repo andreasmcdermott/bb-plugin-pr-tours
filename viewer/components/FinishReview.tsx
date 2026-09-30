@@ -1,3 +1,6 @@
+import { PostReview } from "./PostReview.tsx";
+import { useTourApi } from "../runtime.tsx";
+import type { RevisionRef } from "../api.ts";
 import { REVIEW_EVENTS, type Draft, type ReviewEvent, type Tour } from "../../shared/schema.ts";
 import type { Dispatch } from "../App.tsx";
 import { readinessProblems } from "../draft.ts";
@@ -16,6 +19,8 @@ export function FinishReview({
   isLatest,
   posted,
   syncCommand,
+  revisionRef,
+  onPosted,
 }: {
   tour: Tour | null;
   draft: Draft;
@@ -24,7 +29,10 @@ export function FinishReview({
   isLatest: boolean;
   posted: ReadonlySet<string>;
   syncCommand: string;
+  revisionRef: RevisionRef;
+  onPosted: () => void;
 }) {
+  const api = useTourApi();
   const tourFindings = tour?.sections.flatMap((s) => s.findings) ?? [];
   const postedBefore = tourFindings.filter((f) => posted.has(f.id)).length;
   const findings = isAuthor ? tourFindings.filter((f) => !posted.has(f.id)) : [];
@@ -85,8 +93,14 @@ export function FinishReview({
         <p>This revision was not posted to GitHub.</p>
       ) : draft.readyAt ? (
         <div className="finish__ready">
-          <p>Ready to sync. Ask your agent to post it, or run:</p>
-          <pre>{syncCommand}</pre>
+          {api.previewReview ? (
+            <PostReview revisionRef={revisionRef} onPosted={onPosted} />
+          ) : (
+            <>
+              <p>Ready to sync. Ask your agent to post it, or run:</p>
+              <pre>{syncCommand}</pre>
+            </>
+          )}
           <button type="button" className="button" onClick={() => dispatch({ type: "reopen" })}>
             Keep editing
           </button>
@@ -104,7 +118,7 @@ export function FinishReview({
             disabled={problems.length > 0}
             onClick={() => dispatch({ type: "markReady", at: new Date().toISOString() })}
           >
-            Mark ready to sync
+            {api.previewReview ? "Mark ready for preview" : "Mark ready to sync"}
           </button>
         </>
       )}

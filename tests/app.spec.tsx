@@ -38,7 +38,26 @@ async function setup(emptyTours = false) {
     url: review.pr.url,
     updatedAt: new Date().toISOString(),
   };
-  const save = vi.fn(({ draft }) => draft);
+  const save = vi.fn(async ({ draft }) => ({ draft, version: "saved" }));
+  const preview = vi.fn(async () => ({
+    token: "preview-1",
+    viewer: tourAuthor,
+    payload: {
+      commit_id: review.pr.headSha,
+      event: "APPROVE",
+      body: "Ready for review",
+      comments: [],
+    },
+  }));
+  const post = vi.fn(async () => ({
+    url: "https://github.com/org/repo/pull/1#review-10",
+    warnings: [],
+  }));
+  const freshness = vi.fn(async () => ({
+    headSha: review.pr.headSha,
+    state: "open",
+    checkedAt: new Date().toISOString(),
+  }));
   const app = await loadPluginApp(() => import("../app.tsx"));
   const slot = renderSlot(
     app.navPanels[0]!,
@@ -49,13 +68,16 @@ async function setup(emptyTours = false) {
         tours: () =>
           emptyTours ? { viewer: tourAuthor, tours: [] } : toursResponse(dir, tourAuthor),
         review: () => review,
-        draft: () => emptyDraft(review.pr.headSha),
+        draft: () => ({ draft: emptyDraft(review.pr.headSha), version: "initial" }),
+        freshness,
+        preview,
+        post,
         save,
       },
     },
   );
   cleanups.push(() => slot.lifecycle.unmount());
-  return { app, slot, save, review };
+  return { app, slot, save, review, preview, post, freshness };
 }
 it("renders the tour inside BB and saves a reviewer comment through RPC", async () => {
   const { slot, save } = await setup();
@@ -119,7 +141,7 @@ it("waits for the trailing draft save before leaving the review", async () => {
   save.mockImplementationOnce(
     ({ draft }) =>
       new Promise((resolve) => {
-        release = () => resolve(draft);
+        release = () => resolve({ draft, version: "saved" });
       }),
   );
   fireEvent.change(await slot.findByPlaceholderText("Review summary for the author"), {
@@ -130,4 +152,110 @@ it("waits for the trailing draft save before leaving the review", async () => {
   expect(slot.inspection.navigateCalls).toHaveLength(0);
   release();
   await waitFor(() => expect(slot.inspection.navigateCalls).toHaveLength(1));
+});
+
+it("keeps failed edits on screen, retries them, and blocks leaving until saved", async () => {
+  const { slot, save } = await setup();
+  save.mockRejectedValueOnce(new Error("Host offline"));
+  fireEvent.change(await slot.findByPlaceholderText("Review summary for the author"), {
+    target: { value: "Keep these edits" },
+  });
+  fireEvent.click(slot.getByRole("button", { name: "← All PRs" }));
+  await slot.findByRole("button", { name: "Retry save" });
+  expect(slot.inspection.navigateCalls).toHaveLength(0);
+  expect(
+    (slot.getByPlaceholderText("Review summary for the author") as HTMLTextAreaElement).value,
+  ).toBe("Keep these edits");
+  fireEvent.click(slot.getByRole("button", { name: "Retry save" }));
+  await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+  expect(save.mock.calls[1][0].draft.body).toBe("Keep these edits");
+});
+
+it("previews the saved review and requires an explicit click to post", async () => {
+  const { slot, save, preview, post } = await setup();
+  fireEvent.change(await slot.findByPlaceholderText("Review summary for the author"), {
+    target: { value: "Ready for review" },
+  });
+  fireEvent.click(slot.getByRole("radio", { name: "Approve" }));
+  fireEvent.click(slot.getByRole("button", { name: "Mark ready for preview" }));
+  fireEvent.click(await slot.findByRole("button", { name: "Preview GitHub review" }));
+  await slot.findByRole("heading", { name: `Post as ${tourAuthor.login}` });
+  expect(save.mock.calls.at(-1)![0].draft.readyAt).toBeTruthy();
+  expect(preview).toHaveBeenCalledTimes(1);
+  expect(post).not.toHaveBeenCalled();
+  fireEvent.click(slot.getByRole("button", { name: "Post to GitHub" }));
+  await slot.findByRole("link", { name: "View on GitHub" });
+  expect(post).toHaveBeenCalledWith(
+    expect.objectContaining({ token: "preview-1", viewerId: tourAuthor.id }),
+  );
+});
+
+it("shows live GitHub updates without changing the reviewed snapshot", async () => {
+  const { slot, freshness, review } = await setup();
+  await slot.findByRole("button", { name: "Check GitHub" });
+  freshness.mockResolvedValue({
+    headSha: "newer-commit",
+    state: "open",
+    checkedAt: new Date().toISOString(),
+  });
+  fireEvent.click(slot.getByRole("button", { name: "Check GitHub" }));
+  await slot.findByText(/Update the tour to review the new commits/);
+  expect(review.pr.headSha).toBe("head111");
+});
+
+it("announces agent updates without replacing pending edits", async () => {
+  const { slot } = await setup();
+  const summary = await slot.findByPlaceholderText("Review summary for the author");
+  fireEvent.change(summary, { target: { value: "Still writing this" } });
+  await slot.behavior.emitRealtime("tours-changed", { id: "review-1" });
+  await slot.findByText("Tour updated. Refresh to load it.");
+  expect((summary as HTMLTextAreaElement).value).toBe("Still writing this");
+  expect(slot.inspection.rpcCalls.filter((call) => call.method === "review")).toHaveLength(1);
+});
+
+it("searches the library and archives and restores reviews", async () => {
+  const app = await loadPluginApp(() => import("../app.tsx"));
+  let archived = false;
+  const entry = {
+    id: "r1",
+    hostId: "h1",
+    dir: "/reviews/1",
+    threadId: null,
+    title: "Add search",
+    url: "https://github.com/org/repo/pull/12",
+    updatedAt: new Date().toISOString(),
+    archived,
+  };
+  const archive = vi.fn(({ archived: value }) => {
+    archived = value;
+    return null;
+  });
+  const slot = renderSlot(
+    app.navPanels[0]!,
+    { subPath: "" },
+    {
+      rpc: {
+        list: (input) =>
+          Boolean((input as { archived?: boolean }).archived) === archived
+            ? [{ ...entry, archived }]
+            : [],
+        progress: () => ({ status: "in-progress", viewed: 2, total: 3 }),
+        archive,
+      },
+    },
+  );
+  cleanups.push(() => slot.lifecycle.unmount());
+  await slot.findByText("In progress · 2/3 sections viewed");
+  fireEvent.change(slot.getByRole("textbox", { name: "Search reviews" }), {
+    target: { value: "no-match" },
+  });
+  await slot.findByText("No matching reviews.");
+  fireEvent.change(slot.getByRole("textbox", { name: "Search reviews" }), {
+    target: { value: "repo/pull/12" },
+  });
+  fireEvent.click(await slot.findByRole("button", { name: "Archive" }));
+  await waitFor(() => expect(archive).toHaveBeenCalledWith({ id: "r1", archived: true }));
+  fireEvent.click(slot.getByRole("checkbox", { name: "Show archived reviews" }));
+  fireEvent.click(await slot.findByRole("button", { name: "Restore" }));
+  await waitFor(() => expect(archive).toHaveBeenLastCalledWith({ id: "r1", archived: false }));
 });

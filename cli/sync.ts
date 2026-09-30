@@ -54,6 +54,8 @@ export async function sync(options: {
   dir: string;
   tour?: string;
   dryRun?: boolean;
+  expectedReviewerId?: number;
+  expectedPayload?: ReviewPayload;
   allowOutdated?: boolean;
   force?: boolean;
   now?: () => Date;
@@ -68,6 +70,8 @@ export async function sync(options: {
   }
   const { pr, files } = loadSnapshot(revision);
   const reviewer = await currentUser(options.gh);
+  if (options.expectedReviewerId !== undefined && reviewer.id !== options.expectedReviewerId)
+    throw new Error("The GitHub account changed. Preview the review again.");
   const draft = loadDraft(revision, reviewer);
 
   if (draft.synced && !options.force) {
@@ -101,6 +105,11 @@ export async function sync(options: {
     throw new Error("GitHub does not allow approving or requesting changes on your own PR");
   }
 
+  if (
+    options.expectedPayload &&
+    JSON.stringify(payload) !== JSON.stringify(options.expectedPayload)
+  )
+    throw new Error("The review changed. Preview it again before posting.");
   if (options.dryRun) return { status: "dry-run", payload };
 
   const response = await ghJson<{ id: number; html_url: string }>(

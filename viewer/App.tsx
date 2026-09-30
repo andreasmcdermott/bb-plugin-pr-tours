@@ -135,6 +135,17 @@ function TourLoader({
   const [review, setReview] = useState<ReviewResponse | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [draftGeneration, setDraftGeneration] = useState(0);
+  const resetDraft = async () => {
+    try {
+      const value = await fetchDraft(revisionRef);
+      setDraft(value);
+      setDraftGeneration((v) => v + 1);
+      reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const reload = useCallback(() => {
     fetchReview(revisionRef).then(setReview, (e: Error) => setError(e.message));
@@ -149,6 +160,8 @@ function TourLoader({
   if (!review || !draft) return <div className="loading">Loading review…</div>;
   return (
     <Review
+      key={draftGeneration}
+      resetDraft={() => void resetDraft()}
       review={review}
       initialDraft={draft}
       tours={tours}
@@ -159,7 +172,7 @@ function TourLoader({
   );
 }
 
-function useAutosave(ref: RevisionRef, draft: Draft, initial: Draft): SaveState {
+function useAutosave(ref: RevisionRef, draft: Draft, initial: Draft) {
   const { saveDraft, registerFlush } = useTourApi();
   const [state, setState] = useState<SaveState>({ status: "saved" });
   const saver = useMemo(
@@ -177,10 +190,21 @@ function useAutosave(ref: RevisionRef, draft: Draft, initial: Draft): SaveState 
     [saver],
   );
 
-  return state;
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (state.status !== "saved") {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [state.status]);
+  return { ...state, retry: saver.flush, cancel: saver.cancel };
 }
 
 function Review({
+  resetDraft,
   review,
   initialDraft,
   tours,
@@ -188,6 +212,7 @@ function Review({
   onReload,
   onNavigate,
 }: {
+  resetDraft: () => void;
   review: ReviewResponse;
   initialDraft: Draft;
   tours: TourSummary[];
@@ -197,6 +222,39 @@ function Review({
 }) {
   const [draft, dispatch] = useReducer(draftReducer, initialDraft);
   const save = useAutosave(revisionRef, draft, initialDraft);
+  const api = useTourApi();
+  const [freshness, setFreshness] = useState<{
+    headSha: string;
+    state: string;
+    checkedAt: string;
+  } | null>(null);
+  const [freshnessError, setFreshnessError] = useState("");
+  const checkFreshness = useCallback(() => {
+    api.checkFreshness?.().then(
+      (value) => {
+        setFreshness(value);
+        setFreshnessError("");
+      },
+      (error) => setFreshnessError(error instanceof Error ? error.message : String(error)),
+    );
+  }, [api]);
+  useEffect(() => {
+    checkFreshness();
+  }, [checkFreshness]);
+  const [discardConfirm, setDiscardConfirm] = useState(false);
+  const downloadDraft = () => {
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(draft, null, 2)], { type: "application/json" }),
+    );
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `pr-${review.pr.number}-draft.json`;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
+  const reset = () => {
+    void save.cancel().then(resetDraft);
+  };
   const { pr, tour, files, validation, meta, isAuthor, isLatest, history } = review;
   const current = review.revision;
   const sections = useMemo(
@@ -228,7 +286,8 @@ function Review({
   );
   const posted = useMemo(() => postedFindings(history), [history]);
   const latest = review.revisions.at(-1)!;
-  const outdated = isLatest && review.liveHeadSha !== current.headSha;
+  const liveHeadSha = freshness?.headSha ?? review.liveHeadSha;
+  const outdated = isLatest && liveHeadSha !== current.headSha;
   const locked = !isLatest || draft.readyAt !== null || draft.synced !== null;
   const readOnly = reading || locked;
   const findingsReadOnly = readOnly || !isAuthor;
@@ -271,7 +330,7 @@ function Review({
           <TourPicker
             tours={tours}
             tourId={revisionRef.tourId}
-            liveHeadSha={review.liveHeadSha}
+            liveHeadSha={liveHeadSha}
             revisions={review.revisions}
             revision={current.revision}
             onNavigate={onNavigate}
@@ -293,6 +352,38 @@ function Review({
           )}
         </header>
 
+        {!reading && save.status === "error" && (
+          <div className="banner banner--error" role="alert">
+            <p>Your latest edits are not saved. {save.message}</p>
+            <button className="button" onClick={() => void save.retry().catch(() => {})}>
+              Retry save
+            </button>{" "}
+            <button className="button" onClick={downloadDraft}>
+              Download my edits
+            </button>{" "}
+            <button
+              className="button"
+              onClick={() => {
+                if (discardConfirm) reset();
+                else setDiscardConfirm(true);
+              }}
+            >
+              {discardConfirm ? "Discard my edits and reload saved draft" : "Reload saved draft"}
+            </button>
+          </div>
+        )}
+        {api.checkFreshness && (
+          <div className="banner">
+            {freshnessError
+              ? `Could not check GitHub: ${freshnessError}`
+              : freshness
+                ? `GitHub PR is ${freshness.state}. Checked ${new Date(freshness.checkedAt).toLocaleTimeString()}.`
+                : "Checking GitHub for new commits…"}{" "}
+            <button className="button button--quiet" onClick={checkFreshness}>
+              Check GitHub
+            </button>
+          </div>
+        )}
         {problems.length > 0 && (
           <div className="banner banner--error">
             <strong>
@@ -327,18 +418,20 @@ function Review({
         )}
         {outdated && reading && (
           <div className="banner">
-            The PR had moved on to <code>{review.liveHeadSha.slice(0, 7)}</code> before this export,
-            but r{current.revision} reviews <code>{current.headSha.slice(0, 7)}</code>.
+            The PR had moved on to <code>{liveHeadSha.slice(0, 7)}</code> before this export, but r
+            {current.revision} reviews <code>{current.headSha.slice(0, 7)}</code>.
           </div>
         )}
         {outdated && !reading && (
           <div className="banner banner--error">
-            The PR has new commits: it is at <code>{review.liveHeadSha.slice(0, 7)}</code>, but r
+            The PR has new commits: it is at <code>{liveHeadSha.slice(0, 7)}</code>, but r
             {current.revision} reviews <code>{current.headSha.slice(0, 7)}</code>.{" "}
             {isAuthor ? (
               <>
-                Ask your agent to revise the tour, or run:
-                <pre>{review.reviseCommand}</pre>
+                Update the tour to review the new commits.
+                <p>
+                  In your thread, run <code>/pr-tour {pr.url}</code> to update this tour.
+                </p>
               </>
             ) : (
               `Ask ${meta.author.login} to revise the tour.`
@@ -394,6 +487,8 @@ function Review({
             isLatest={isLatest}
             posted={posted}
             syncCommand={review.syncCommand}
+            revisionRef={revisionRef}
+            onPosted={reset}
           />
         )}
       </main>

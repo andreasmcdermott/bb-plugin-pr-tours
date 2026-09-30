@@ -58,10 +58,15 @@ try {
       deviceScaleFactor: 1,
       mobile: false,
     });
+    const previousOrigin = await evaluate("performance.timeOrigin");
     await command("Page.reload");
     let loaded = false;
     for (let attempt = 0; attempt < 50; attempt++) {
-      if (await evaluate('!!document.querySelector(".section__header")')) {
+      if (
+        await evaluate(
+          `performance.timeOrigin !== ${previousOrigin} && !!document.querySelector(".pr-tour-root .section__header")`,
+        )
+      ) {
         loaded = true;
         break;
       }
